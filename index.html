@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Secure Secret Sharing</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+      }
+      input[type="text"],
+      textarea {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        cursor: pointer;
+        border-radius: 5px;
+        margin-right: 10px;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      button.secondary {
+        background-color: #6c757d;
+      }
+      button.secondary:hover {
+        background-color: #545b62;
+      }
+      #publicKeyUrl,
+      #encryptedUrl,
+      #decryptedMessageText {
+        display: block;
+        word-break: break-all;
+        background-color: #e9ecef;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Secure Secret Sharing</h1>
+      <div id="keyGeneration" style="display: none">
+        <p>Generate your key pair to start sharing secrets securely:</p>
+        <button onclick="generateKeyPair()">Generate Key Pair</button>
+      </div>
+      <div id="publicKeyDisplay" style="display: none">
+        <h2>Your Public Key URL:</h2>
+        <p>
+          Share this URL with someone who wants to send you a secret message:
+        </p>
+        <p id="publicKeyUrl"></p>
+        <button onclick="regenerateKeyPair()" class="secondary">
+          Regenerate Key Pair
+        </button>
+      </div>
+      <div id="messageEncryption" style="display: none">
+        <h2>Encrypt a Secret Message</h2>
+        <textarea
+          id="secretMessage"
+          rows="4"
+          placeholder="Enter your secret message here"
+        ></textarea>
+        <button onclick="encryptMessage()">Encrypt Message</button>
+        <div id="encryptedMessage" style="display: none">
+          <h3>Encrypted Message URL:</h3>
+          <p>Share this URL with the recipient:</p>
+          <div id="encryptedUrl"></div>
+        </div>
+      </div>
+      <div id="messageDecryption" style="display: none">
+        <h2>Decrypt a Secret Message</h2>
+        <button onclick="decryptMessage()">Decrypt Message</button>
+        <div id="decryptedMessage" style="display: none">
+          <h3>Decrypted Message:</h3>
+          <div id="decryptedMessageText"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let keyPair;
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+
+      async function generateKeyPair() {
+        keyPair = await window.crypto.subtle.generateKey(
+          {
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-256",
+          },
+          true,
+          ["encrypt", "decrypt"],
+        );
+
+        await saveAndDisplayPublicKey();
+      }
+
+      async function saveAndDisplayPublicKey() {
+        const publicKeyJwk = await window.crypto.subtle.exportKey(
+          "jwk",
+          keyPair.publicKey,
+        );
+        const publicKeyString = JSON.stringify(publicKeyJwk);
+        const encodedPublicKey = btoa(publicKeyString)
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=/g, "");
+
+        localStorage.setItem(
+          "privateKey",
+          JSON.stringify(
+            await window.crypto.subtle.exportKey("jwk", keyPair.privateKey),
+          ),
+        );
+
+        const publicKeyUrl = `${
+          window.location.href.split("?")[0]
+        }?key=${encodedPublicKey}`;
+        document.getElementById("publicKeyUrl").textContent = publicKeyUrl;
+        document.getElementById("keyGeneration").style.display = "none";
+        document.getElementById("publicKeyDisplay").style.display = "block";
+      }
+
+      async function regenerateKeyPair() {
+        if (
+          confirm(
+            "Are you sure you want to regenerate your key pair? This will invalidate your old keys and any messages encrypted with them.",
+          )
+        ) {
+          localStorage.removeItem("privateKey");
+          await generateKeyPair();
+        }
+      }
+
+      async function encryptMessage() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const encodedPublicKey = urlParams.get("key");
+        if (!encodedPublicKey) {
+          alert(
+            "No public key found in the URL. Please use the URL shared by the recipient.",
+          );
+          return;
+        }
+
+        const publicKeyString = atob(
+          encodedPublicKey.replace(/-/g, "+").replace(/_/g, "/"),
+        );
+        const publicKeyJwk = JSON.parse(publicKeyString);
+        const publicKey = await window.crypto.subtle.importKey(
+          "jwk",
+          publicKeyJwk,
+          {
+            name: "RSA-OAEP",
+            hash: "SHA-256",
+          },
+          true,
+          ["encrypt"],
+        );
+
+        const message = document.getElementById("secretMessage").value;
+        const encryptedData = await window.crypto.subtle.encrypt(
+          {
+            name: "RSA-OAEP",
+          },
+          publicKey,
+          encoder.encode(message),
+        );
+
+        const encryptedString = btoa(
+          String.fromCharCode(...new Uint8Array(encryptedData)),
+        );
+        const encodedMessage = encryptedString
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=/g, "");
+
+        const messageUrl = `${
+          window.location.href.split("?")[0]
+        }?message=${encodedMessage}`;
+        document.getElementById("encryptedUrl").textContent = messageUrl;
+        document.getElementById("encryptedMessage").style.display = "block";
+      }
+
+      async function decryptMessage() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const encodedMessage = urlParams.get("message");
+        if (!encodedMessage) {
+          alert(
+            "No encrypted message found in the URL. Please use the URL shared by the sender.",
+          );
+          return;
+        }
+
+        const privateKeyJwk = JSON.parse(localStorage.getItem("privateKey"));
+        if (!privateKeyJwk) {
+          alert("No private key found. Please generate a key pair first.");
+          return;
+        }
+
+        const privateKey = await window.crypto.subtle.importKey(
+          "jwk",
+          privateKeyJwk,
+          {
+            name: "RSA-OAEP",
+            hash: "SHA-256",
+          },
+          true,
+          ["decrypt"],
+        );
+
+        const encryptedData = Uint8Array.from(
+          atob(encodedMessage.replace(/-/g, "+").replace(/_/g, "/")),
+          (c) => c.charCodeAt(0),
+        );
+
+        try {
+          const decryptedData = await window.crypto.subtle.decrypt(
+            {
+              name: "RSA-OAEP",
+            },
+            privateKey,
+            encryptedData,
+          );
+
+          const decryptedMessage = decoder.decode(decryptedData);
+          document.getElementById("decryptedMessage").style.display = "block";
+          document.getElementById("decryptedMessageText").textContent =
+            decryptedMessage;
+        } catch (error) {
+          alert(
+            "Failed to decrypt the message. It may not be intended for you or may be corrupted.",
+          );
+        }
+      }
+
+      window.onload = function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has("key")) {
+          document.getElementById("messageEncryption").style.display = "block";
+        } else if (urlParams.has("message")) {
+          document.getElementById("messageDecryption").style.display = "block";
+        } else if (localStorage.getItem("privateKey")) {
+          generateKeyPair(); // Regenerate public key URL if private key exists
+        } else {
+          document.getElementById("keyGeneration").style.display = "block";
+        }
+      };
+    </script>
+  </body>
+</html>
